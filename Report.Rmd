@@ -1,0 +1,163 @@
+---
+title: "Project of Practical Machine Learning Course"
+author: "hsalami"
+date: "July 18, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Background
+A large amount of data about personal activity is nowadays available, thanks to devices such as FitBit, Jawbone Up and Nike FuelBand. People are interested in tracking how much they do of an activity, but they also can be interested in knowing how correctly they do the activity. In this project, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal is to use the provided data to build a model that predicts the quality of barbell lifting.
+
+## Executive Summary
+In this report, we propose a machine learning model to predict the quality of dumbbell lifting during an exercise. The provided data represent measurements collected from accelerometers of the participants while they were performing Biceps Curl. We first did some pre-processing for the data by removing the mostly-empty columns and keeping the relevant features. We then sliced the data into training and testing sets. Using cross-validation on the training set, several models were implemented and compared. In particular, the ensemble methods (random forest and gradient boosted trees) had the best performance in terms of accuracy. After fine-tuning the more promising models, the final model was chosen to be gradient boosted trees with an out-of-sample accuracy of 99.71%.
+
+## Exploration and Pre-Processing of the Dataset
+The provided data, which is available here <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>, represent measurements collected from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants and belong to one of the following 5 classes: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). More information about the data is available from this source: <http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har>
+The data used consist of 19622 instances where each instance has 160 features including the category class. However, not all features are relevant. The first few columns consist of participants' name and timestamps, and some other columns are mostly empty. This is why we first extract the relevant features:
+```{r message=FALSE, warning=FALSE}
+data<-read.csv("pml-training.csv")
+pos=grep("magnet|^accel|^(total_accel)|gyros|^pitch|^roll|^yaw",names(data));
+pos=append(pos,ncol(data))
+new_data=data[,pos]
+```
+Each observation now consists of 53 features (the first 52 measurements consist of features on the Euler angles (roll, pitch and yaw), as well as the raw accelerometer, gyroscope and
+magnetometer readings and the last column is for class type (A,B,C,D or E)). We split the data into training and testing sets (75% for training and 25% for testing). The training set will be used for model training and selection and the testing set will be used to predict the out-of-sample error for the final chosen model. 
+```{r message=FALSE, warning=FALSE}
+library(caret)
+set.seed(101)
+inTrain <- createDataPartition(new_data$classe, p=0.75, list=FALSE)
+training<-new_data[inTrain,]
+testing<- new_data[-inTrain,]
+```
+We now explore the statistics of each feature using the skim_to_wide function, which computes the statistics of each row:
+```{r message=FALSE, warning=FALSE, warning=FALSE}
+library(skimr)
+statTrain <- skim_to_wide(training)
+#1:type, 2:variable, 3:missing, 4:complete, 5:n
+#9:mean, 10:sd, 11:p0, 13:p50, 15:p100, 16:hist
+statTrain[, c(1:5, 9:11, 13, 15:16)]
+```
+No missing values were found and all features are numeric and have normal values (note that we did not show all rows because of space limitation). We then scale and center the features as follows:
+```{r cachedChunk, message=FALSE, warning=FALSE, cache=TRUE}
+preProcess_model <- preProcess(training, method=c('center','scale'))
+training<-predict(preProcess_model,newdata=training)
+testing<-predict(preProcess_model,newdata=testing)
+```
+
+## Models Implemented
+The data is now ready for model training. For that, we start with implementing some models with their default tuning parameters. We will then fine-tune the models that look more promising. In order to compare the models and tune their parameters, we choose 5-fold cross-validation as the resampling method:
+```{r cachedChunk2, message=FALSE, warning=FALSE,cache=TRUE}
+fitControl <- trainControl(method = "cv",number = 5,savePredictions = "final")
+```
+We also use Accuracy as the performance metric.
+
+### Linear Models
+We first start with the following linear models: multinomial logistic regression and linear SVM (SVM: support vector machine, which similarly to logistic regression, classifies the observations by finding a linear boundary between classes. For SVM, the linear boundary is found by maximizing the margins between classes): 
+```{r cachedChunk3, message=FALSE, warning=FALSE, cache=TRUE}
+##Logistic regression
+glmFit<-train(classe~.,data=training,method="multinom",trControl=fitControl,verbose=FALSE,trace=FALSE)
+##SVM 
+svmFit<-train(classe~.,data=training,method="svmLinear",trControl=fitControl,verbose=FALSE)
+```
+The resulting accuracy of each model is:
+```{r}
+max(glmFit$results$Accuracy)
+max(svmFit$results$Accuracy)
+```
+### Non-Linear Models
+We now implement non-linear models to see if the obtained performance with linear models can be improved. We use the models of naive-Bayes, tree and SVM with radial kernel:
+```{r message=FALSE, warning=FALSE, cache=TRUE}
+##tree
+treeFit<-train(classe~.,data=training,method="rpart2",trControl=fitControl,tuneGrid=expand.grid(maxdepth=c(10,20,30)))
+##Naive Bayes 
+library(klaR)
+nbFit<-train(classe~.,data=training, method="nb",trControl=fitControl,verbose=FALSE)
+## Radial SVM
+svmRadFit<-train(classe~.,data=training,method="svmRadial",trControl=fitControl,verbose=FALSE)
+```
+The resulting accuracies are as follows:
+```{r }
+max(treeFit$results$Accuracy)
+max(nbFit$results$Accuracy)
+max(svmRadFit$results$Accuracy)
+```
+We see that with SVM with radial kernel, there is a great enhancement in performance.
+
+### Ensemble Methods
+We now try ensemble methods such as random forests and gradient boosted trees:
+```{r warning=FALSE,message=FALSE, cache=TRUE}
+rfFit<-train(classe~.,data=training, method="rf",trControl=fitControl)
+boostFit<-train(classe~.,data=training,method="xgbTree",trControl=fitControl)
+```
+and the obtained accuracies are as follows.
+```{r} 
+max(rfFit$results$Accuracy)
+max(boostFit$results$Accuracy)
+```
+The ensemble methods and the SVM with radial kernel seem more promising. We next are going to fine-tune the paramaters of each of these promising models.
+
+## Parameters Tuning
+We now tune the parameter mtry (number of variables randomly sampled as candidates at each split) for the model of random forest.
+```{r warning=FALSE,message=FALSE,cache=TRUE}
+set.seed(102)
+rfGrid<- expand.grid(mtry=c(seq(6,10,2),15))
+rfFit2<-train(classe~.,data=training, method="rf",trControl=fitControl,tuneGrid=rfGrid)
+```
+We obtain the following results:
+```{r}
+rfFit2
+```
+We now tune the parameters for the model of boosted trees:
+```{r warning=FALSE,message=FALSE,cache=TRUE}
+set.seed(103)
+boostGrid<-expand.grid(max_depth=6,nrounds=150,eta=c(0.3,0.4),gamma=0,colsample_bytree=c(0.6,0.8,1),subsample=c(0.5,0.75,1),min_child_weight=1)
+boostFit2<-train(classe~.,data=training,method="xgbTree",trControl=fitControl,tuneGrid=boostGrid)
+```
+We obtain the following results:
+```{r}
+boostFit2
+```
+We now tune the parameters for the model of radial SVM:
+```{r warning=FALSE,message=FALSE,cache=TRUE}
+grid_radial <- expand.grid(sigma = c(0.1, 0.2),C = c(1.5,2,5,10))
+svmRadFit2<-train(classe~.,data=training,method="svmRadial",trControl=fitControl,tuneGrid=grid_radial,verbose=FALSE)
+```
+We obtain the following results:
+```{r}
+svmRadFit2
+```
+## Comparison of Models
+To compare between the models, we plot the dotplot of the results obtained on the 5 folds.
+```{r}
+# Compare model performances using resample()
+models_compare <- resamples(list(RF=rfFit2, SVM=svmRadFit2, boost=boostFit2))
+# Summary of the models performances
+summary(models_compare)
+# Draw dor plots to compare models
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+dotplot(models_compare, scales=scales)
+```
+
+We see from the average performance on the 5 folds and the performance on each fold of each method, that the gradient boosted tree has the best performance. Therefore, we choose the model of gradient boosted trees.
+
+## Testing the final model
+We now test the model of gradient boosted trees on the testing set in order to predict the out-of-sample accuracy.
+```{r}
+pred=predict(boostFit2,testing)
+confusionMatrix(data=pred,reference=testing$classe)
+```
+Therefore the expected out-of-sample accuracy is 99.71%.
+
+### Importance of Featurres
+We now plot the importnace of each feacture, to see which feature contribute most to predicting the quality of dumbbell lifting.
+```{r fig.height=8,fig.width=6}
+plot(varImp(boostFit2))
+```
+
+We see that the two variables: roll_belt and yaw_belt are the top two predictors.
+
+## Conclusion
+We have implemented various models on the provided data to recognize the quality of dumbbell lifting. We have seen that the ensemble method based on gradient boosted trees performed best in terms of accuracy and has an out-of-sample accuracy of 99.71%.
